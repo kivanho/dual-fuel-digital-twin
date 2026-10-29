@@ -44,36 +44,6 @@ def train_knnr_model(df):
     return model, metrics
 
 
-def predict_efficiency_knnr(model, df, target_power_output, target_ch4_percent):
-    """
-    Predicts efficiency and compares with the closest engine-map point (in scaled feature space).
-
-    Returns:
-        Dictionary with prediction, closest engine-map values, and difference.
-    """
-    df_clean = df[FEATURES + [TARGET]].dropna()
-
-    # Prepare input
-    X_input = np.array([[target_power_output, target_ch4_percent]])
-    predicted_eff = model.predict(X_input)[0]
-
-    # Standardize for correct distance comparison
-    scaler = model.named_steps['scaler']
-    X_full_scaled = scaler.transform(df_clean[FEATURES].values)
-    X_input_scaled = scaler.transform(X_input)
-
-    # Find closest point (Euclidean in scaled space)
-    distances = np.linalg.norm(X_full_scaled - X_input_scaled, axis=1)
-    closest_row = df_clean.iloc[distances.argmin()]
-
-    real_eff = closest_row[TARGET]
-
-    return {
-        "target_power_output": round(target_power_output, 2),
-        "target_ch4_percent": round(target_ch4_percent, 2),
-        "predicted_efficiency": round(predicted_eff, 2),
-        "closest_measured_power": round(closest_row['power_output'], 2),
-        "closest_measured_ch4": round(closest_row['calculated_ch4_share_percent'], 2),
-        "measured_efficiency": round(real_eff, 2),
-        "difference": round(predicted_eff - real_eff, 2),
-    }
+def predict_efficiency(model, power_output, ch4_percent):
+    """Predicted electrical efficiency [%] at one operating point."""
+    return float(model.predict([[power_output, ch4_percent]])[0])

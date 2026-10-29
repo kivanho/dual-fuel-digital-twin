@@ -8,7 +8,7 @@ VOLTAGE_LL = 400.0          # line-to-line voltage [V]
 FREQUENCY = 50.0            # [Hz]
 POWER_FACTOR = 0.8          # cos φ the ratings are given at
 RATED_POWER_KW = 14.4       # standby electrical rating (18 kVA × 0.8) [kWe]
-CONTINUOUS_POWER_KW = 13.2  # continuous electrical rating (16.5 kVA × 0.8) [kWe]
+PRIME_POWER_KW = 13.2       # prime electrical rating (16.5 kVA × 0.8) [kWe]
 
 # Mechanical side
 ENGINE_SPEED_RPM = 1500.0   # 4-pole alternator at 50 Hz

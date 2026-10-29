@@ -1,90 +1,81 @@
-from fastapi import FastAPI, HTTPException, Query
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from app.engine_specs import RATED_POWER_KW
+
 from app.simulation_service import SimulationService
+from app.synthetic_data import CH4_RANGE_PERCENT, DES_RANGE_PERCENT, POWER_RANGE_KW
 
-# Initialize FastAPI app and simulation service
-app = FastAPI(title="Dual-Fuel Engine Digital Twin")
 sim = SimulationService()
-_loop_task = None
 
-@app.on_event("startup")
-async def start_background_task():
-    """Start the simulation loop as a background task."""
-    global _loop_task
 
+@asynccontextmanager
+async def lifespan(app):
+    """Run the simulation loop in the background while the app is up."""
     async def simulation_loop():
         while True:
-            sim.step()  # Advance the simulation by one step
-            await asyncio.sleep(sim.dt)  # Wait for the simulation time step
-    _loop_task = asyncio.create_task(simulation_loop())
+            sim.step()
+            await asyncio.sleep(sim.dt)
 
-@app.on_event("shutdown")
-async def stop_background_task():
-    """Stop the simulation loop."""
-    if _loop_task is not None:
-        _loop_task.cancel()
+    task = asyncio.create_task(simulation_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Dual-Fuel Engine Digital Twin", lifespan=lifespan)
+
+
+class SimulationInputs(BaseModel):
+    """Operating point. Ranges match the engine map the models are trained on."""
+    power_output: float = Field(5, ge=POWER_RANGE_KW[0], le=POWER_RANGE_KW[1],
+                                description="Electrical power output [kW]")
+    diesel_energy_share: float = Field(10, ge=DES_RANGE_PERCENT[0], le=DES_RANGE_PERCENT[1],
+                                       description="Diesel share of the fuel energy [%]")
+    methane_percentage: float = Field(85, ge=CH4_RANGE_PERCENT[0], le=CH4_RANGE_PERCENT[1],
+                                      description="CH4 volume share of the CH4/CO2 gas mix [%]")
+
 
 @app.get("/")
 def read_root():
-    """Welcome message for the API."""
-    return {"message": "Welcome to the Digital Twin Simulation API"}
+    return {"message": "Dual-fuel engine digital twin. See /docs for the API."}
+
 
 @app.get("/live")
 def get_live_snapshot():
-    """
-    Return the current simulation state as a standard GET response.
-    This is not a stream — it returns a fresh snapshot on each request.
-    """
-    try:
-        return sim.get_current_state()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Current simulation state as a single JSON snapshot."""
+    return sim.get_current_state()
+
 
 @app.get("/live_state")
 async def live_state(max_events: Optional[int] = Query(None, ge=1, description="Stop after this many events")):
-    """Stream live simulation state updates as Server-Sent Events."""
+    """Stream the simulation state as Server-Sent Events, one per step."""
     async def event_stream():
         sent = 0
         while max_events is None or sent < max_events:
-            try:
-                yield f"data: {json.dumps(sim.get_current_state())}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                break
+            yield f"data: {json.dumps(sim.get_current_state())}\n\n"
             sent += 1
             if max_events is None or sent < max_events:
                 await asyncio.sleep(sim.dt)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-# Define a Pydantic model for input validation
-class SimulationInputs(BaseModel):
-    power_output: float = Field(5, ge=0.01, le=RATED_POWER_KW, description="Desired electrical power output in kW")
-    diesel_energy_share: float = Field(10, ge=0, le=100, description="Diesel energy share (0 to 100)")
-    methane_percentage: float = Field(85, gt=0, le=100, description="Methane share of the CH4/CO2 gas mix (0 to 100)")
 
 @app.post("/update_inputs")
 def update_inputs(new_inputs: SimulationInputs):
-    """Update the input parameters for the simulation."""
+    """Set a new operating point; the fuel-flow loops move towards it from the current state."""
     try:
-        # Convert Pydantic model to dictionary and pass to the simulation
-        sim.update_inputs(new_inputs.dict())
-        return {"status": "Inputs updated successfully."}
+        sim.update_inputs(new_inputs.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "Inputs updated."}
+
 
 @app.post("/reset")
 def reset_simulation():
-    """Reset the simulation to its initial state."""
-    try:
-        sim.reset()
-        return {"status": "Simulation reset successfully."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Close both fuel valves and reset the controllers."""
+    sim.reset()
+    return {"status": "Simulation reset."}

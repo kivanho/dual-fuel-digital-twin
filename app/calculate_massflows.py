@@ -13,7 +13,7 @@ def calculate_fuel_mass_flows(power_output_kW, efficiency, des):
     - des: float, Diesel Energy Share [%] (0–100)
 
     Returns:
-    - dict with total energy input and mass flows for Diesel & CH4
+    - dict with total energy input [MJ/h] and mass flows for diesel and CH4 [kg/h], unrounded
     """
     des = des / 100  # Convert percentage to fraction
 
@@ -29,9 +29,9 @@ def calculate_fuel_mass_flows(power_output_kW, efficiency, des):
     m_ch4 = Q_ch4 / LHV_CH4
 
     return {
-        "Q_total_MJ_h": round(Q_total, 2),
-        "Q_diesel_MJ_h": round(Q_diesel, 2),
-        "Q_ch4_MJ_h": round(Q_ch4, 2),
-        "diesel_mass_flow_kg_h": round(m_diesel, 2),
-        "ch4_mass_flow_kg_h": round(m_ch4, 2)
+        "Q_total_MJ_h": Q_total,
+        "Q_diesel_MJ_h": Q_diesel,
+        "Q_ch4_MJ_h": Q_ch4,
+        "diesel_mass_flow_kg_h": m_diesel,
+        "ch4_mass_flow_kg_h": m_ch4,
     }

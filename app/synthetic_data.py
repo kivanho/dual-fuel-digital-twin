@@ -3,13 +3,14 @@ Synthetic engine map for an 18 kVA (14.4 kWe) diesel/methane dual-fuel generator
 
 The original project trained on lab measurements that are not public. This
 module generates plausible operating points with the same columns so the
-models, the energy balance and the PID loop can run end to end. The shapes
+models, the energy balance and the flow loops can run end to end. The shapes
 (efficiency rising with load and saturating, CO2 dilution lowering
 efficiency and exhaust temperature) follow textbook dual-fuel behaviour.
 At 100 % CH4 and 30 % diesel energy share the curves are anchored to the
-diesel genset datasheet (electrical efficiency from the fuel consumption at
-50/75/100 % load, exhaust temperature at the continuous rating). Everything
-else is illustrative, not measured.
+diesel-only genset datasheet (electrical efficiency from the fuel consumption
+at 50/75/100 % load, exhaust temperature at the prime rating). Treating the
+dual-fuel engine like the diesel original at that point is an assumption;
+everything else is illustrative, not measured.
 """
 import os
 
@@ -29,14 +30,19 @@ ENGINE_MAP_COLUMNS = [
     "ch4_mass_flow_calc",           # [kg/h]
 ]
 
+# Operating range the map covers; the API only accepts inputs inside it
+POWER_RANGE_KW = (2.0, RATED_POWER_KW)
+CH4_RANGE_PERCENT = (55.0, 100.0)
+DES_RANGE_PERCENT = (10.0, 60.0)
+
 
 def generate_engine_map(n_points=400, seed=42):
     """Return a DataFrame of synthetic steady-state operating points."""
     rng = np.random.default_rng(seed)
 
-    power = rng.uniform(2.0, RATED_POWER_KW, n_points)
-    ch4 = rng.uniform(55.0, 100.0, n_points)
-    des = rng.uniform(10.0, 60.0, n_points)
+    power = rng.uniform(*POWER_RANGE_KW, n_points)
+    ch4 = rng.uniform(*CH4_RANGE_PERCENT, n_points)
+    des = rng.uniform(*DES_RANGE_PERCENT, n_points)
 
     load = power / RATED_POWER_KW
     efficiency = (
