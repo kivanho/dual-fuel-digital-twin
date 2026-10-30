@@ -18,31 +18,37 @@ import numpy as np
 import pandas as pd
 
 from app.calculate_massflows import LHV_CH4, LHV_DIESEL
+from app.engine_map import ENGINE_MAP_COLUMNS, load_engine_map_csv  # noqa: F401 (re-exported)
 from app.engine_specs import RATED_POWER_KW
 
-ENGINE_MAP_COLUMNS = [
-    "power_output",                 # electrical power [kW]
-    "calculated_ch4_share_percent", # CH4 share in the CH4/CO2 gas mix [%]
-    "des_percent",                  # diesel energy share [%]
-    "efficiency_electric",          # electrical efficiency [%]
-    "exhaust_temp",                 # exhaust gas temperature [°C]
-    "diesel_mass_flow",             # [kg/h]
-    "ch4_mass_flow_calc",           # [kg/h]
-]
-
-# Operating range the map covers; the API only accepts inputs inside it
+# Operating range the synthetic generator samples. The API does NOT use these
+# constants: the accepted domain comes from the trained bundle (app/domain.py).
 POWER_RANGE_KW = (2.0, RATED_POWER_KW)
 CH4_RANGE_PERCENT = (55.0, 100.0)
 DES_RANGE_PERCENT = (10.0, 60.0)
 
+DEFAULT_N_POINTS = 400
+DEFAULT_SEED = 42
 
-def generate_engine_map(n_points=400, seed=42):
-    """Return a DataFrame of synthetic steady-state operating points."""
+
+def generate_engine_map(n_points=DEFAULT_N_POINTS, seed=DEFAULT_SEED, include_corners=True):
+    """
+    Return a DataFrame of `n_points` synthetic steady-state operating points.
+
+    With include_corners (default) the first 8 points are the corners of the
+    design range, as a measurement campaign would cover the range extremes; the
+    rest are sampled uniformly. The trained bundle's supported domain is derived
+    from the data, so this makes the rated power and the range ends supported.
+    """
     rng = np.random.default_rng(seed)
 
     power = rng.uniform(*POWER_RANGE_KW, n_points)
     ch4 = rng.uniform(*CH4_RANGE_PERCENT, n_points)
     des = rng.uniform(*DES_RANGE_PERCENT, n_points)
+    if include_corners:
+        corners = np.array([(p, c, d) for p in POWER_RANGE_KW for c in CH4_RANGE_PERCENT for d in DES_RANGE_PERCENT])
+        k = min(len(corners), n_points)
+        power[:k], ch4[:k], des[:k] = corners[:k, 0], corners[:k, 1], corners[:k, 2]
 
     load = power / RATED_POWER_KW
     efficiency = (
@@ -77,19 +83,17 @@ def generate_engine_map(n_points=400, seed=42):
     })[ENGINE_MAP_COLUMNS]
 
 
-def load_engine_map():
+def load_engine_map(path=None, **validation_kwargs):
     """
     Return the engine map the twin trains on.
 
-    Synthetic by default. Set ENGINE_MAP_CSV to a CSV with ENGINE_MAP_COLUMNS
-    to train on your own measurements instead.
+    Synthetic by default. Pass a CSV path (or set ENGINE_MAP_CSV) with the
+    columns and units documented in app/engine_map.py to train on your own
+    measurements; the file is validated and rejected with an explicit message
+    if it is unusable.
     """
-    path = os.environ.get("ENGINE_MAP_CSV")
+    path = path or os.environ.get("ENGINE_MAP_CSV")
     if not path:
         return generate_engine_map()
-
-    df = pd.read_csv(path)
-    missing = set(ENGINE_MAP_COLUMNS) - set(df.columns)
-    if missing:
-        raise ValueError(f"{path} is missing columns: {sorted(missing)}")
-    return df[ENGINE_MAP_COLUMNS]
+    df, _report = load_engine_map_csv(path, **validation_kwargs)
+    return df

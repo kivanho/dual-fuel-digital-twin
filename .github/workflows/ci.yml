@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Train the synthetic model bundle
+        run: python -m app.train --out models/synthetic --report-dir ci-report
+      - name: Show bundle manifest summary
+        run: python -c "import json; m=json.load(open('models/synthetic/manifest.json')); print(m['model_version'], m['dependencies'])"
+      - name: Run tests (RuntimeWarnings are errors)
+        run: python -m pytest -q
+        env:
+          MODEL_BUNDLE_DIR: models/synthetic
+      - name: End-to-end smoke test
+        run: python -m scripts.smoke_test --bundle models/synthetic
+      - name: Upload evaluation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-py${{ matrix.python-version }}
+          path: ci-report/

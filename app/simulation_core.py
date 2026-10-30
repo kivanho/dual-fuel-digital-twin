@@ -24,28 +24,42 @@ def co2_in_fuel_gas_kg_h(ch4_mass_flow_kg_h, ch4_vol_percent):
     return ch4_mass_flow_kg_h * (1 - x) / x * M_CO2 / M_CH4
 
 
-def run_simulation_step(input_data, efficiency_model, exhaust_model, loops, dt, substeps=10):
+def compute_targets(input_data, efficiency_model, exhaust_model):
     """
-    Advance the twin by dt seconds.
-
-    Targets come from the models and the energy balance at the requested operating
-    point. The fuel-flow loops then move the actual flows towards them, and the
-    plant outputs (power, diesel energy share, exhaust temperature, current, torque)
-    are computed from those actual flows. During transients the electrical
-    efficiency is held at the target operating point's value.
+    Steady-state targets for an operating point: efficiency and exhaust temperature
+    from the models, fuel mass flows from the energy balance.
     """
     power = input_data["power"]
     ch4 = input_data["ch4_percent"]
     des = input_data["des_percent"]
-
     efficiency_target = predict_efficiency(efficiency_model, power, ch4) / 100
     flows = calculate_fuel_mass_flows(power, efficiency_target, des)
-    targets = {"diesel": flows["diesel_mass_flow_kg_h"], "ch4": flows["ch4_mass_flow_kg_h"]}
-    temp_target = exhaust_model.predict(np.array([[power, ch4, des]]))[0]
+    return {
+        "efficiency_target": efficiency_target,
+        "diesel_target": flows["diesel_mass_flow_kg_h"],
+        "ch4_target": flows["ch4_mass_flow_kg_h"],
+        "temp_target": float(exhaust_model.predict(np.array([[power, ch4, des]]))[0]),
+    }
+
+
+def advance_plant(input_data, targets, exhaust_model, loops, dt, substeps=10, running=True):
+    """
+    Advance the fuel-flow loops by dt seconds and derive the plant outputs from the actual flows.
+
+    While running, the loops move towards the target flows. When stopped, both
+    valves are commanded closed (target flow 0) and the flows decay with the
+    valve dynamics; the engine winds down to zero power. During transients the
+    electrical efficiency is held at the target operating point's value.
+    """
+    ch4 = input_data["ch4_percent"]
+    des = input_data["des_percent"]
+    efficiency_target = targets["efficiency_target"]
+    flow_targets = ({"diesel": targets["diesel_target"], "ch4": targets["ch4_target"]} if running
+                    else {"diesel": 0.0, "ch4": 0.0})
 
     for _ in range(substeps):
         for name, loop in loops.items():
-            loop.step(targets[name], dt / substeps)
+            loop.step(flow_targets[name], dt / substeps)
 
     diesel = loops["diesel"].flow
     ch4_flow = loops["ch4"].flow
@@ -54,13 +68,12 @@ def run_simulation_step(input_data, efficiency_model, exhaust_model, loops, dt, 
     q_fuel = q_diesel + q_ch4
     power_actual = min(efficiency_target * q_fuel / 3.6, RATED_POWER_KW)
     des_actual = 100 * q_diesel / q_fuel if q_fuel > 0 else des
-    temp_actual = exhaust_model.predict(np.array([[power_actual, ch4, des_actual]]))[0]
+    temp_actual = float(exhaust_model.predict(np.array([[power_actual, ch4, des_actual]]))[0])
 
     return {
-        "efficiency_target": efficiency_target,
-        "diesel_target": targets["diesel"],
-        "ch4_target": targets["ch4"],
-        "temp_target": temp_target,
+        **targets,
+        "diesel_target": flow_targets["diesel"],
+        "ch4_target": flow_targets["ch4"],
         "power": power_actual,
         "diesel": diesel,
         "ch4": ch4_flow,
@@ -70,3 +83,12 @@ def run_simulation_step(input_data, efficiency_model, exhaust_model, loops, dt, 
         "current": line_current_a(power_actual),
         "torque": shaft_torque_nm(power_actual),
     }
+
+
+def run_simulation_step(input_data, efficiency_model, exhaust_model, loops, dt, substeps=10, running=True):
+    """
+    Advance the twin by dt seconds: compute the targets for the requested
+    operating point, then move the plant towards them (see advance_plant).
+    """
+    targets = compute_targets(input_data, efficiency_model, exhaust_model)
+    return advance_plant(input_data, targets, exhaust_model, loops, dt, substeps, running)
