@@ -18,25 +18,20 @@ import numpy as np
 import pandas as pd
 
 from app.calculate_massflows import LHV_CH4, LHV_DIESEL
+from app.engine_map import ENGINE_MAP_COLUMNS, load_engine_map_csv  # noqa: F401 (re-exported)
 from app.engine_specs import RATED_POWER_KW
 
-ENGINE_MAP_COLUMNS = [
-    "power_output",                 # electrical power [kW]
-    "calculated_ch4_share_percent", # CH4 share in the CH4/CO2 gas mix [%]
-    "des_percent",                  # diesel energy share [%]
-    "efficiency_electric",          # electrical efficiency [%]
-    "exhaust_temp",                 # exhaust gas temperature [°C]
-    "diesel_mass_flow",             # [kg/h]
-    "ch4_mass_flow_calc",           # [kg/h]
-]
-
-# Operating range the map covers; the API only accepts inputs inside it
+# Operating range the synthetic generator samples. The API does NOT use these
+# constants: the accepted domain comes from the trained bundle (app/domain.py).
 POWER_RANGE_KW = (2.0, RATED_POWER_KW)
 CH4_RANGE_PERCENT = (55.0, 100.0)
 DES_RANGE_PERCENT = (10.0, 60.0)
 
+DEFAULT_N_POINTS = 400
+DEFAULT_SEED = 42
 
-def generate_engine_map(n_points=400, seed=42):
+
+def generate_engine_map(n_points=DEFAULT_N_POINTS, seed=DEFAULT_SEED):
     """Return a DataFrame of synthetic steady-state operating points."""
     rng = np.random.default_rng(seed)
 
@@ -77,19 +72,17 @@ def generate_engine_map(n_points=400, seed=42):
     })[ENGINE_MAP_COLUMNS]
 
 
-def load_engine_map():
+def load_engine_map(path=None, **validation_kwargs):
     """
     Return the engine map the twin trains on.
 
-    Synthetic by default. Set ENGINE_MAP_CSV to a CSV with ENGINE_MAP_COLUMNS
-    to train on your own measurements instead.
+    Synthetic by default. Pass a CSV path (or set ENGINE_MAP_CSV) with the
+    columns and units documented in app/engine_map.py to train on your own
+    measurements; the file is validated and rejected with an explicit message
+    if it is unusable.
     """
-    path = os.environ.get("ENGINE_MAP_CSV")
+    path = path or os.environ.get("ENGINE_MAP_CSV")
     if not path:
         return generate_engine_map()
-
-    df = pd.read_csv(path)
-    missing = set(ENGINE_MAP_COLUMNS) - set(df.columns)
-    if missing:
-        raise ValueError(f"{path} is missing columns: {sorted(missing)}")
-    return df[ENGINE_MAP_COLUMNS]
+    df, _report = load_engine_map_csv(path, **validation_kwargs)
+    return df
