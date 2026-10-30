@@ -1,3 +1,10 @@
+"""
+Efficiency model: k-nearest-neighbour regression on standardised features.
+
+Production features are power and CH4 share. Diesel energy share is deliberately
+not a feature here; `app/evaluation.py` quantifies that choice (kNN with and
+without DES) instead of assuming it.
+"""
 import numpy as np
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.pipeline import Pipeline
@@ -7,28 +14,40 @@ from sklearn.metrics import mean_squared_error, r2_score
 
 FEATURES = ['power_output', 'calculated_ch4_share_percent']
 TARGET = 'efficiency_electric'
+N_NEIGHBORS = 10
+MINKOWSKI_P = 1  # Manhattan distance
 
 
-def build_knnr_model():
+def build_knnr_model(n_neighbors=N_NEIGHBORS, p=MINKOWSKI_P):
     """kNN regression with k=10 and Manhattan distance on standardised features."""
     return Pipeline([
         ('scaler', StandardScaler()),
-        ('knn', KNeighborsRegressor(n_neighbors=10, p=1))
+        ('knn', KNeighborsRegressor(n_neighbors=n_neighbors, p=p))
     ])
 
 
-def train_knnr_model(df):
+def fit_knnr_model(df, features=FEATURES, target=TARGET, **kwargs):
+    """Fit the efficiency model on all rows of `df` (no evaluation)."""
+    model = build_knnr_model(**kwargs)
+    model.fit(df[list(features)].values, df[target].values)
+    return model
+
+
+def train_knnr_model(df, test_size=0.2, random_state=42):
     """
-    Trains the KNNR model using power output and CH₄ %, evaluates on a held-out test set.
+    Score the kNN model on a random hold-out, then refit on the whole map.
+
+    Kept for scripts that want a quick interpolation score; the training CLI
+    (`python -m app.train`) uses app/evaluation.py for the full comparison.
 
     Returns:
-        model, metrics dict with RMSE and R² on the test set
+        model, metrics dict with RMSE and R² on the hold-out
     """
     df_clean = df[FEATURES + [TARGET]].dropna()
     X = df_clean[FEATURES].values
     y = df_clean[TARGET].values
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
 
     model = build_knnr_model()
     model.fit(X_train, y_train)
@@ -46,4 +65,4 @@ def train_knnr_model(df):
 
 def predict_efficiency(model, power_output, ch4_percent):
     """Predicted electrical efficiency [%] at one operating point."""
-    return float(model.predict([[power_output, ch4_percent]])[0])
+    return float(model.predict(np.array([[power_output, ch4_percent]]))[0])

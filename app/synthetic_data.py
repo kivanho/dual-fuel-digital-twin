@@ -31,13 +31,24 @@ DEFAULT_N_POINTS = 400
 DEFAULT_SEED = 42
 
 
-def generate_engine_map(n_points=DEFAULT_N_POINTS, seed=DEFAULT_SEED):
-    """Return a DataFrame of synthetic steady-state operating points."""
+def generate_engine_map(n_points=DEFAULT_N_POINTS, seed=DEFAULT_SEED, include_corners=True):
+    """
+    Return a DataFrame of `n_points` synthetic steady-state operating points.
+
+    With include_corners (default) the first 8 points are the corners of the
+    design range, as a measurement campaign would cover the range extremes; the
+    rest are sampled uniformly. The trained bundle's supported domain is derived
+    from the data, so this makes the rated power and the range ends supported.
+    """
     rng = np.random.default_rng(seed)
 
     power = rng.uniform(*POWER_RANGE_KW, n_points)
     ch4 = rng.uniform(*CH4_RANGE_PERCENT, n_points)
     des = rng.uniform(*DES_RANGE_PERCENT, n_points)
+    if include_corners:
+        corners = np.array([(p, c, d) for p in POWER_RANGE_KW for c in CH4_RANGE_PERCENT for d in DES_RANGE_PERCENT])
+        k = min(len(corners), n_points)
+        power[:k], ch4[:k], des[:k] = corners[:k, 0], corners[:k, 1], corners[:k, 2]
 
     load = power / RATED_POWER_KW
     efficiency = (
