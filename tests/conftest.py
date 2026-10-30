@@ -23,3 +23,9 @@ def _bundle_env(trained_bundle_dir):
         os.environ.pop("MODEL_BUNDLE_DIR", None)
     else:
         os.environ["MODEL_BUNDLE_DIR"] = previous
+
+
+@pytest.fixture(scope="session")
+def bundle(trained_bundle_dir):
+    from app.bundle import load_bundle
+    return load_bundle(trained_bundle_dir)

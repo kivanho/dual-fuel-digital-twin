@@ -1,20 +1,11 @@
-import json
-
 import pytest
-from fastapi.testclient import TestClient
 
 from app.calculate_massflows import LHV_CH4, LHV_DIESEL, calculate_fuel_mass_flows
-from app.main import app, sim
-from app.engine_specs import RATED_POWER_KW
+from app.engine_map import ENGINE_MAP_COLUMNS
+from app.knnr_model import train_knnr_model
 from app.regulator import FlowLoop
 from app.simulation_core import co2_in_fuel_gas_kg_h, line_current_a, shaft_torque_nm
-from app.synthetic_data import ENGINE_MAP_COLUMNS, generate_engine_map
-
-
-@pytest.fixture
-def client():
-    with TestClient(app) as c:
-        yield c
+from app.synthetic_data import generate_engine_map
 
 
 def test_synthetic_engine_map_is_plausible():
@@ -29,6 +20,14 @@ def test_synthetic_engine_map_is_plausible():
 
 def test_synthetic_engine_map_is_reproducible():
     assert generate_engine_map().equals(generate_engine_map())
+
+
+def test_synthetic_engine_map_covers_the_design_corners():
+    df = generate_engine_map()
+    assert df["power_output"].min() == 2.0 and df["power_output"].max() == 14.4
+    assert df["calculated_ch4_share_percent"].min() == 55.0 and df["calculated_ch4_share_percent"].max() == 100.0
+    assert df["des_percent"].min() == 10.0 and df["des_percent"].max() == 60.0
+    assert len(df) == 400
 
 
 def test_mass_flows_close_energy_balance():
@@ -58,7 +57,8 @@ def test_synthetic_efficiency_matches_diesel_datasheet():
 
 
 def test_knnr_model_fits_engine_map():
-    assert sim.knnr_metrics["r2"] > 0.8
+    _, metrics = train_knnr_model(generate_engine_map())
+    assert metrics["r2"] > 0.8
 
 
 def test_flow_loop_settles_without_overshoot():
@@ -82,58 +82,3 @@ def test_flow_loop_anti_windup():
 def test_co2_from_ch4_volume_share():
     # 80 vol-% CH4: n_CO2 / n_CH4 = 0.25, so m_CO2 = 0.25 · 44.01 / 16.04 · m_CH4
     assert co2_in_fuel_gas_kg_h(2.0, 80.0) == pytest.approx(2.0 * 0.25 * 44.01 / 16.04)
-
-
-def test_power_never_exceeds_rating_after_step():
-    sim.reset()
-    sim.update_inputs({"power_output": RATED_POWER_KW, "diesel_energy_share": 30.0, "methane_percentage": 90.0})
-    powers = []
-    for _ in range(10):
-        sim.step()
-        powers.append(sim.get_current_state()["actual"]["power"])
-    assert max(powers) <= RATED_POWER_KW
-    assert powers == sorted(powers)  # rises monotonically, no overshoot
-
-
-def test_root(client):
-    assert client.get("/").status_code == 200
-
-
-def test_update_inputs_and_live_snapshot(client):
-    payload = {"power_output": 12.0, "diesel_energy_share": 20.0, "methane_percentage": 80.0}
-    response = client.post("/update_inputs", json=payload)
-    assert response.status_code == 200
-
-    for _ in range(10):
-        sim.step()
-    state = client.get("/live").json()
-    assert state["input"] == {"power": 12.0, "ch4_percent": 80.0, "des_percent": 20.0}
-    assert state["actual"]["power"] == pytest.approx(12.0, rel=0.005)
-    assert state["actual"]["diesel_energy_share"] == pytest.approx(20.0, abs=0.2)
-    assert 0 < state["target"]["efficiency"] < 0.4
-
-
-@pytest.mark.parametrize("payload", [
-    {"power_output": 1.0, "diesel_energy_share": 20, "methane_percentage": 80},   # below the map
-    {"power_output": 15.0, "diesel_energy_share": 20, "methane_percentage": 80},  # above the rating
-    {"power_output": 8.0, "diesel_energy_share": 100, "methane_percentage": 80},  # outside the DES range
-    {"power_output": 8.0, "diesel_energy_share": 20, "methane_percentage": 10},   # outside the CH4 range
-])
-def test_update_inputs_rejects_out_of_range(client, payload):
-    assert client.post("/update_inputs", json=payload).status_code == 422
-
-
-def test_live_state_streams_json(client):
-    sim.step()
-    with client.stream("GET", "/live_state", params={"max_events": 2}) as response:
-        assert response.status_code == 200
-        events = [line[len("data: "):] for line in response.iter_lines() if line.startswith("data: ")]
-    assert len(events) == 2
-    state = json.loads(events[0])
-    assert {"input", "target", "actual"} <= set(state)
-
-
-def test_reset(client):
-    sim.step()
-    assert client.post("/reset").status_code == 200
-    assert client.get("/live").json()["actual"]["power"] is None

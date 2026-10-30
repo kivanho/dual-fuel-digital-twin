@@ -1,7 +1,8 @@
 """
 Draw the README figures (light and dark variants) into docs/.
 
-    python -m scripts.make_figures
+    python -m app.train                  # the figures use the trained bundle
+    python -m scripts.make_figures       # reads MODEL_BUNDLE_DIR or models/synthetic
 
 Left: the kNN efficiency model over the synthetic engine map.
 Right: the twin's response to two set-point changes, one step per second.
@@ -15,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from app.simulation_service import SimulationService
-from app.synthetic_data import POWER_RANGE_KW
+from app.synthetic_data import POWER_RANGE_KW, generate_engine_map
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 
@@ -29,7 +30,7 @@ THEMES = {
 
 def step_response():
     """Power and fuel flows for 8 → 12 kW at t = 0 and 12 → 6 kW at t = 15 s."""
-    sim = SimulationService()
+    sim = SimulationService.from_bundle_dir()
     point = {"diesel_energy_share": 20.0, "methane_percentage": 80.0}
     sim.update_inputs({"power_output": 8.0, **point})
     for _ in range(40):
@@ -62,8 +63,9 @@ def draw(theme, name):
         ax.set_facecolor(c["bg"])
         ax.set_axisbelow(True)
 
-    sim = SimulationService()
-    df = sim.df
+    sim = SimulationService.from_bundle_dir()
+    params = sim.bundle.manifest["data"].get("params") or {}
+    df = generate_engine_map(params.get("n_points", 400), params.get("seed", 42))
     p = np.linspace(*POWER_RANGE_KW, 120)
     for ch4, color in ((100, c["accent"]), (80, c["second"]), (60, c["third"])):
         near = df[(df["calculated_ch4_share_percent"] - ch4).abs() < 4]
